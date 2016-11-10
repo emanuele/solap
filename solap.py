@@ -9,6 +9,14 @@ from sklearn.neighbors import KDTree
 from time import time
 
 
+def test_unique_rows(a):
+    """Test wether an array 'a' has unique rows (no repetitions) or not.
+    """
+    # See: http://stackoverflow.com/questions/16970982/find-unique-rows-in-numpy-array
+    unique_rows = np.unique(a.view(np.dtype((np.void, a.dtype.itemsize*a.shape[1])))).view(a.dtype).reshape(-1, a.shape[1]).shape[0]
+    return (a.shape[0] == unique_rows)
+
+
 def compute_D_I(A, B, k):
     """Compute the sparse distance matrix (D) and the IDs of the neighbors
     (I) between the set of vectors A and the set of vectors B,
@@ -30,6 +38,9 @@ def compute_solap(A, B, k=10, maxvalue=100):
     """Compute a scalable (greedy) Sub-Optimal solution to the Linear
     Assignment Problem.
     """
+    assert(A.shape[0] <= B.shape[0])
+    assert(test_unique_rows(A))
+    assert(test_unique_rows(B))
     sizeA = A.shape[0]
     sizeB = B.shape[0]
     D, I = compute_D_I(A, B, k)
@@ -102,6 +113,9 @@ def compute_solap_sort(A, B, k, maxvalue=100):
     """Compute a scalable (greedy) Sub-Optimal solution to the Linear
     Assignment Problem. Implementation using sorting and recursion.
     """
+    assert(A.shape[0] <= B.shape[0])
+    assert(test_unique_rows(A))
+    assert(test_unique_rows(B))
     sizeA = A.shape[0]
     sizeB = B.shape[0]
     D, I = compute_D_I(A, B, k)
