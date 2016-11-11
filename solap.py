@@ -34,7 +34,7 @@ def compute_D_I(A, B, k):
     return D, I
 
 
-def compute_solap(A, B, k=10, maxvalue=100):
+def compute_solap(A, B, k=10, maxvalue=1e6):
     """Compute a scalable (greedy) Sub-Optimal solution to the Linear
     Assignment Problem.
     """
