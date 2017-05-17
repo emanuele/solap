@@ -38,15 +38,17 @@ def kdt_parallel_query(A, k, n_jobs=-1):
     """Parallel query of the global KDTree 'kdt'.
     """
     global kdt
-    if n_jobs is None or n_jobs == -1:
-        n_jobs = cpu_count()
+    tmp = cpu_count()
+    if (n_jobs is None or n_jobs == -1) and A.shape[0] >= tmp:
+        n_jobs = tmp
 
     if n_jobs > 1:
         tmp = np.linspace(0, A.shape[0], n_jobs + 1).astype(np.int)
     else:  # corner case: joblib detected 1 cpu only.
-        tmp = (0, len(tracks))
+        tmp = (0, A.shape[0])
 
     chunks = zip(tmp[:-1], tmp[1:])
+    print("chunks: %s" % chunks)
     results = Parallel(n_jobs=n_jobs)(delayed(worker)(A[start:stop, :], k) for start, stop in chunks)
     D, I = zip(*results)
     D = np.vstack(D)
@@ -152,7 +154,7 @@ def compute_solap(A, B, k=10, maxvalue=1e6, parallel=True):
     return assignment
 
 
-def compute_solap_sort(A, B, k, maxvalue=100, parallel=True):
+def compute_solap_sort(A, B, k, maxvalue=100, parallel=True, verbose=False):
     """Compute a scalable (greedy) Sub-Optimal solution to the Linear
     Assignment Problem. Implementation using sorting and recursion.
     """
@@ -191,7 +193,7 @@ def compute_solap_sort(A, B, k, maxvalue=100, parallel=True):
     loss = 0.0
     sub_loss = 0.0
     for i, idx in enumerate(idxs):
-        if (i % 1000) == 0:
+        if (i % 1000) == 0 and verbose:
             print("not_assigned_A: %s" % not_assigned_A.sum())
 
         a, tmp = np.unravel_index(idx, I.shape)
