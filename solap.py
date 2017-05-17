@@ -8,6 +8,15 @@ import numpy as np
 from sklearn.neighbors import KDTree
 from time import time
 
+try:
+    from joblib import Parallel, delayed, cpu_count
+    joblib_available = True
+except ImportError:
+    joblib_available = False
+
+
+kdt = None  # container for the shared KDTree(B)
+
 
 def test_unique_rows(a):
     """Test wether an array 'a' has unique rows (no repetitions) or not.
@@ -17,24 +26,58 @@ def test_unique_rows(a):
     return (a.shape[0] == unique_rows)
 
 
-def compute_D_I(A, B, k):
+def worker(A_chunk, k):
+    """Basic worker performing the KDTree query on the global kdt for a
+    chunk of data.
+    """
+    global kdt
+    return kdt.query(A_chunk, k)
+
+
+def kdt_parallel_query(A, k, n_jobs=-1):
+    """Parallel query of the global KDTree 'kdt'.
+    """
+    global kdt
+    if n_jobs is None or n_jobs == -1:
+        n_jobs = cpu_count()
+
+    if n_jobs > 1:
+        tmp = np.linspace(0, A.shape[0], n_jobs + 1).astype(np.int)
+    else:  # corner case: joblib detected 1 cpu only.
+        tmp = (0, len(tracks))
+
+    chunks = zip(tmp[:-1], tmp[1:])
+    results = Parallel(n_jobs=n_jobs)(delayed(worker)(A[start:stop, :], k) for start, stop in chunks)
+    D, I = zip(*results)
+    D = np.vstack(D)
+    I = np.vstack(I)
+    return D, I
+
+
+def compute_D_I(A, B, k, parallel=True):
     """Compute the sparse distance matrix (D) and the IDs of the neighbors
     (I) between the set of vectors A and the set of vectors B,
     considering just k neighbors. This computation is based on the use
     of the KDTree.
     """
+    global joblib_available
+    global kdt
     print("Computing the kdtree (size=%s)." % B.shape[0])
     t0 = time()
     kdt = KDTree(B)
     print("%s sec" % (time()-t0))
     print("Computing %s NN queries, each for %s neighbors." % (A.shape[0], k))
     t0 = time()
-    D, I = kdt.query(A, k=k)
+    if joblib_available and parallel:
+        D, I = kdt_parallel_query(A, k=k)
+    else:
+        D, I = kdt.query(A, k=k)
+
     print("%s sec" % (time()-t0))
     return D, I
 
 
-def compute_solap(A, B, k=10, maxvalue=1e6):
+def compute_solap(A, B, k=10, maxvalue=1e6, parallel=True):
     """Compute a scalable (greedy) Sub-Optimal solution to the Linear
     Assignment Problem.
     """
@@ -43,7 +86,7 @@ def compute_solap(A, B, k=10, maxvalue=1e6):
     assert(test_unique_rows(B))
     sizeA = A.shape[0]
     sizeB = B.shape[0]
-    D, I = compute_D_I(A, B, k)
+    D, I = compute_D_I(A, B, k, parallel=parallel)
 
     print("Suboptimal assignment problem.")
     t0 = time()
@@ -90,7 +133,7 @@ def compute_solap(A, B, k=10, maxvalue=1e6):
             # streamlines:
             map_id_A = map_id_A[not_assigned_A]
             map_id_B = map_id_B[not_assigned_B]
-            D, I = compute_D_I(A[map_id_A], B[map_id_B], k=min(k, map_id_B.size))  # notice that the remaning streamlines in B may be less than k
+            D, I = compute_D_I(A[map_id_A], B[map_id_B], k=min(k, map_id_B.size), parallel=parallel)  # notice that the remaning streamlines in B may be less than k
             # We update nA and nB:
             nA = map_id_A.size
             nB = map_id_B.size
@@ -109,7 +152,7 @@ def compute_solap(A, B, k=10, maxvalue=1e6):
     return assignment
 
 
-def compute_solap_sort(A, B, k, maxvalue=100):
+def compute_solap_sort(A, B, k, maxvalue=100, parallel=True):
     """Compute a scalable (greedy) Sub-Optimal solution to the Linear
     Assignment Problem. Implementation using sorting and recursion.
     """
@@ -118,7 +161,7 @@ def compute_solap_sort(A, B, k, maxvalue=100):
     assert(test_unique_rows(B))
     sizeA = A.shape[0]
     sizeB = B.shape[0]
-    D, I = compute_D_I(A, B, k)
+    D, I = compute_D_I(A, B, k, parallel=parallel)
 
     print("Suboptimal assignment problem.")
     print("Argsort.")
