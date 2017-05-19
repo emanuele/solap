@@ -29,7 +29,7 @@ def test_unique_rows(a):
 
 def worker_query(A_chunk, k):
     """Basic worker performing the Tree query on the global tree for a
-    chunk of data.
+    chunk of data. Useful for tree_parallel_query().
     """
     global tree
     return tree.query(A_chunk, k)
@@ -37,7 +37,7 @@ def worker_query(A_chunk, k):
 
 def worker_query_radius(A_chunk, r):
     """Basic worker performing the Tree query_radius on the global tree
-    for a chunk of data.
+    for a chunk of data.  Useful for tree_parallel_query().
     """
     global tree
     return tree.query_radius(A_chunk, r=r, return_distance=True)
@@ -267,14 +267,13 @@ def compute_solap_radius(AA, BB, radius, k=None, parallel=True):
     """Compute a scalable (greedy) Sub-Optimal solution to the Linear
     Assignment Problem considering distances till a certain radius.
     """
-    # idxs, distances = tree.query_radius(AA, r=radius, return_distance=True)
     idxs, distances = compute_D_I(AA, BB, r=radius, k=k,
                                   query_radius=True)
 
-    print("Computing correspondence.")
+    print("Computing correspondence with compute_solap_radius().")
     b_idxs = np.concatenate(idxs)
     distances = np.concatenate(distances)
-    a_idxs = np.concatenate([np.ones(len(idx)) * i for i, idx in enumerate(idxs)]).astype(np.int)
+    a_idxs = np.concatenate([np.ones(len(idx), dtype=np.int) * i for i, idx in enumerate(idxs)])
 
     tmp = distances.argsort()
     b_idxs = b_idxs[tmp]
@@ -283,14 +282,14 @@ def compute_solap_radius(AA, BB, radius, k=None, parallel=True):
 
     correspondence = []
     counter = 0
-    while b_idxs.size > 0:
+    while a_idxs.size > 0:
         if (counter % 1000) == 0:
             print(counter)
     
         a = a_idxs[0]
         b = b_idxs[0]
         r = distances[0]
-        correspondence.append([a_idxs[0], b_idxs[0], distances[0]])
+        correspondence.append([a, b, r])
         tmp = np.logical_and((a_idxs != a), (b_idxs != b))
         a_idxs = a_idxs[tmp]
         b_idxs = b_idxs[tmp]
@@ -309,7 +308,6 @@ def compute_solap_radius_all(A, B, k):
     """
     sizeA = A.shape[0]
     sizeB = B.shape[0]
-    a_idxs_left = np.arange(sizeA, dtype=np.int)
     correspondence = np.empty(shape=(0, 2))
     A_left = A
     B_left = B
@@ -324,7 +322,7 @@ def compute_solap_radius_all(A, B, k):
 
         tmp = np.vstack([A_left_idx[tmp[:, 0]], B_left_idx[tmp[:, 1]]]).T
         correspondence = np.vstack([correspondence, tmp])
-        # updating A_left and B_left:
+        print("updating A_left and B_left.")
         A_left_idx = np.array(list(set(A_left_idx.tolist()).difference(set(tmp[:, 0].tolist()))), dtype=np.int)
         B_left_idx = np.array(list(set(B_left_idx.tolist()).difference(set(tmp[:, 1].tolist()))), dtype=np.int)
         A_left = A[A_left_idx]
