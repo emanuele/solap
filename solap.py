@@ -5,7 +5,7 @@ large datasets.
 import numpy as np
 # from scipy.spatial import KDTree
 # from scipy.spatial import cKDTree as KDTree
-from sklearn.neighbors import KDTree
+from sklearn.neighbors import KDTree as Tree
 from time import time
 
 try:
@@ -15,7 +15,7 @@ except ImportError:
     joblib_available = False
 
 
-kdt = None  # container for the shared KDTree(B)
+tree = None  # container for the shared Tree(B)
 
 
 def test_unique_rows(a):
@@ -27,7 +27,7 @@ def test_unique_rows(a):
 
 
 def worker_query(A_chunk, k):
-    """Basic worker performing the KDTree query on the global tree for a
+    """Basic worker performing the Tree query on the global tree for a
     chunk of data.
     """
     global tree
@@ -35,7 +35,7 @@ def worker_query(A_chunk, k):
 
 
 def worker_query_radius(A_chunk, r):
-    """Basic worker performing the KDTree query_radius on the global tree
+    """Basic worker performing the Tree query_radius on the global tree
     for a chunk of data.
     """
     global tree
@@ -43,7 +43,7 @@ def worker_query_radius(A_chunk, r):
 
 
 def estimate_radius(tree, A, k, subset_size=1000):
-    """Estimate the radius r for a KDTree.query_radius(A, r) that will
+    """Estimate the radius r for a Tree.query_radius(A, r) that will
     return approximately k neighbors per point.
     """
     if A.shape[0] > subset_size:
@@ -56,7 +56,7 @@ def estimate_radius(tree, A, k, subset_size=1000):
 
 
 def tree_parallel_query(my_tree, A, k=None, r=None, n_jobs=-1, query_radius=False):
-    """Parallel query of the global KDTree 'tree'.
+    """Parallel query of the global Tree 'tree'.
     """
     global tree
     tree = my_tree
@@ -93,13 +93,13 @@ def compute_D_I(A, B, k, parallel=True):
     """Compute the sparse distance matrix (D) and the IDs of the neighbors
     (I) between the set of vectors A and the set of vectors B,
     considering just k neighbors. This computation is based on the use
-    of the KDTree.
+    of the Tree.
     """
     global joblib_available
     global tree
     print("Computing the treeree (size=%s)." % B.shape[0])
     t0 = time()
-    tree = KDTree(B)
+    tree = Tree(B)
     print("%s sec" % (time()-t0))
     print("Computing %s NN queries, each for %s neighbors." % (A.shape[0], k))
     t0 = time()
@@ -257,3 +257,74 @@ def compute_solap_sort(A, B, k, maxvalue=100, parallel=True, verbose=False):
     print("%s sec" % (time()-t0))
     print("Loss = %s" % loss)
     return assignment, loss
+
+
+def compute_solap_radius(AA, BB, radius, k=None):
+    """Compute a scalable (greedy) Sub-Optimal solution to the Linear
+    Assignment Problem considering distances till a certain radius.
+    """
+    print("Building Tree and estimating nearest neighbors till radius %s" % radius)
+    tree = Tree(BB)
+    # idxs, distances = tree.query_radius(AA, r=radius, return_distance=True)
+    idxs, distances = tree_parallel_query(tree, AA, r=radius, k=k, query_radius=True)
+
+    print("Computing correspondence.")
+    b_idxs = np.concatenate(idxs)
+    distances = np.concatenate(distances)
+    a_idxs = np.concatenate([np.ones(len(idx)) * i for i, idx in enumerate(idxs)]).astype(np.int)
+
+    tmp = distances.argsort()
+    b_idxs = b_idxs[tmp]
+    distances = distances[tmp]
+    a_idxs = a_idxs[tmp]
+
+    correspondence = []
+    counter = 0
+    while b_idxs.size > 0:
+        if (counter % 1000) == 0:
+            print(counter)
+    
+        a = a_idxs[0]
+        b = b_idxs[0]
+        r = distances[0]
+        correspondence.append([a_idxs[0], b_idxs[0], distances[0]])
+        tmp = np.logical_and((a_idxs != a), (b_idxs != b))
+        a_idxs = a_idxs[tmp]
+        b_idxs = b_idxs[tmp]
+        distances = distances[tmp]
+        counter += 1
+
+    correspondence = np.array(correspondence)
+    distances = correspondence[:, 2]
+    correspondence = correspondence[:, :2].astype(np.int)
+    return correspondence
+
+
+def compute_solap_radius_all(A, B, k):
+    """Iterate over compute_solap_radius() in order to compute the
+    sub-optimal linear assignment solution over all points in A.
+    """
+    sizeA = A.shape[0]
+    sizeB = B.shape[0]
+    a_idxs_left = np.arange(sizeA, dtype=np.int)
+    correspondence = np.empty(shape=(0, 2))
+    A_left = A
+    B_left = B
+    A_left_idx = np.arange(sizeA, dtype=np.int)
+    B_left_idx = np.arange(sizeB, dtype=np.int)
+    while A_left_idx.size > 0:
+        if A_left_idx.size > k:
+            tmp = compute_solap_radius(A_left, B_left, radius=None, k=k)
+        else:
+            tmp = compute_solap(A_left, B_left, k=A_left_idx.size)
+            tmp = np.vstack([range(A_left_idx.size), tmp]).T
+
+        tmp = np.vstack([A_left_idx[tmp[:, 0]], B_left_idx[tmp[:, 1]]]).T
+        correspondence = np.vstack([correspondence, tmp])
+        # updating A_left and B_left:
+        A_left_idx = np.array(list(set(A_left_idx.tolist()).difference(set(tmp[:, 0].tolist()))), dtype=np.int)
+        B_left_idx = np.array(list(set(B_left_idx.tolist()).difference(set(tmp[:, 1].tolist()))), dtype=np.int)
+        A_left = A[A_left_idx]
+        B_left = B[B_left_idx]
+
+    return correspondence
