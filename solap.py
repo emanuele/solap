@@ -26,18 +26,40 @@ def test_unique_rows(a):
     return (a.shape[0] == unique_rows)
 
 
-def worker(A_chunk, k):
-    """Basic worker performing the KDTree query on the global kdt for a
+def worker_query(A_chunk, k):
+    """Basic worker performing the KDTree query on the global tree for a
     chunk of data.
     """
-    global kdt
-    return kdt.query(A_chunk, k)
+    global tree
+    return tree.query(A_chunk, k)
 
 
-def kdt_parallel_query(A, k, n_jobs=-1):
-    """Parallel query of the global KDTree 'kdt'.
+def worker_query_radius(A_chunk, r):
+    """Basic worker performing the KDTree query_radius on the global tree
+    for a chunk of data.
     """
-    global kdt
+    global tree
+    return tree.query_radius(A_chunk, r=r, return_distance=True)
+
+
+def estimate_radius(tree, A, k, subset_size=1000):
+    """Estimate the radius r for a KDTree.query_radius(A, r) that will
+    return approximately k neighbors per point.
+    """
+    if A.shape[0] > subset_size:
+        A = A[np.random.permutation(A.shape[0])[:subset_size], :]  # subsampling
+
+    d, i = tree_parallel_query(tree, A, k)
+    r = d[:, -1].mean()
+    print("Estimated radius to get %s neighbors on average: %s" % (k, r))
+    return r
+
+
+def tree_parallel_query(my_tree, A, k=None, r=None, n_jobs=-1, query_radius=False):
+    """Parallel query of the global KDTree 'tree'.
+    """
+    global tree
+    tree = my_tree
     tmp = cpu_count()
     if (n_jobs is None or n_jobs == -1) and A.shape[0] >= tmp:
         n_jobs = tmp
@@ -49,10 +71,21 @@ def kdt_parallel_query(A, k, n_jobs=-1):
 
     chunks = zip(tmp[:-1], tmp[1:])
     print("chunks: %s" % chunks)
-    results = Parallel(n_jobs=n_jobs)(delayed(worker)(A[start:stop, :], k) for start, stop in chunks)
-    D, I = zip(*results)
-    D = np.vstack(D)
-    I = np.vstack(I)
+    if query_radius:
+        if r is None:
+            r = estimate_radius(tree, A, k)
+
+        results = Parallel(n_jobs=n_jobs)(delayed(worker_query_radius)(A[start:stop, :], r) for start, stop in chunks)
+        D, I = zip(*results)
+        D = np.concatenate(D)
+        I = np.concatenate(I)
+    else:
+        results = Parallel(n_jobs=n_jobs)(delayed(worker_query)(A[start:stop, :], k) for start, stop in chunks)
+        worker = worker_query
+        D, I = zip(*results)
+        D = np.vstack(D)
+        I = np.vstack(I)
+
     return D, I
 
 
@@ -63,17 +96,17 @@ def compute_D_I(A, B, k, parallel=True):
     of the KDTree.
     """
     global joblib_available
-    global kdt
-    print("Computing the kdtree (size=%s)." % B.shape[0])
+    global tree
+    print("Computing the treeree (size=%s)." % B.shape[0])
     t0 = time()
-    kdt = KDTree(B)
+    tree = KDTree(B)
     print("%s sec" % (time()-t0))
     print("Computing %s NN queries, each for %s neighbors." % (A.shape[0], k))
     t0 = time()
     if joblib_available and parallel:
-        D, I = kdt_parallel_query(A, k=k)
+        D, I = tree_parallel_query(tree, A, k=k)
     else:
-        D, I = kdt.query(A, k=k)
+        D, I = tree.query(A, k=k)
 
     print("%s sec" % (time()-t0))
     return D, I
@@ -127,9 +160,9 @@ def compute_solap(A, B, k=10, maxvalue=1e6, parallel=True):
         D[removed] = maxvalue
         # If one or more of the remaining (still not assigned) rows of
         # D contain ONLY non-valid values (i.e. maxvalue), then the D
-        # and I (so the kdtree) must be recomputed:
+        # and I (so the tree) must be recomputed:
         if (D[not_assigned_A, :] == maxvalue).all(axis=1).any() and i < (sizeA - 1): # and we are not at the last iteration...
-            print("iteration %s: re-computing the kdtree etc. (size=%s)." % (i, not_assigned_B.sum()))
+            print("iteration %s: re-computing the tree etc. (size=%s)." % (i, not_assigned_B.sum()))
             t1 = time()
             # we keep track of the original IDs of the non assigned
             # streamlines:
