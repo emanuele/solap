@@ -3,9 +3,10 @@ large datasets.
 """
 
 import numpy as np
-# from scipy.spatial import KDTree
-# from scipy.spatial import cKDTree as KDTree
+# from scipy.spatial import KDTree as Tree
+# from scipy.spatial import cKDTree as Tree
 from sklearn.neighbors import KDTree as Tree
+# from sklearn.neighbors import BallTree as Tree
 from time import time
 
 try:
@@ -89,24 +90,27 @@ def tree_parallel_query(my_tree, A, k=None, r=None, n_jobs=-1, query_radius=Fals
     return D, I
 
 
-def compute_D_I(A, B, k, parallel=True):
-    """Compute the sparse distance matrix (D) and the IDs of the neighbors
-    (I) between the set of vectors A and the set of vectors B,
-    considering just k neighbors. This computation is based on the use
-    of the Tree.
+def compute_D_I(A, B, k=None, r=None, parallel=True, query_radius=False):
+    """Compute the distances (D) and the IDs of the neighbors (I) between
+    the set of vectors A and the set of vectors B, considering just k
+    neighbors or the neighbors within radius r. This computation is
+    based on the use of a Tree, e.g. KDTree, BallTree.
     """
     global joblib_available
     global tree
-    print("Computing the treeree (size=%s)." % B.shape[0])
+    print("Computing the tree (size=%s)." % B.shape[0])
     t0 = time()
     tree = Tree(B)
     print("%s sec" % (time()-t0))
     print("Computing %s NN queries, each for %s neighbors." % (A.shape[0], k))
     t0 = time()
     if joblib_available and parallel:
-        D, I = tree_parallel_query(tree, A, k=k)
+        D, I = tree_parallel_query(tree, A, k=k, r=r, query_radius=query_radius)
     else:
-        D, I = tree.query(A, k=k)
+        if query_radius:
+            D, I = tree.query_radius(A, r=r, return_distance=True)
+        else:
+            D, I = tree.query(A, k=k)
 
     print("%s sec" % (time()-t0))
     return D, I
@@ -259,14 +263,13 @@ def compute_solap_sort(A, B, k, maxvalue=100, parallel=True, verbose=False):
     return assignment, loss
 
 
-def compute_solap_radius(AA, BB, radius, k=None):
+def compute_solap_radius(AA, BB, radius, k=None, parallel=True):
     """Compute a scalable (greedy) Sub-Optimal solution to the Linear
     Assignment Problem considering distances till a certain radius.
     """
-    print("Building Tree and estimating nearest neighbors till radius %s" % radius)
-    tree = Tree(BB)
     # idxs, distances = tree.query_radius(AA, r=radius, return_distance=True)
-    idxs, distances = tree_parallel_query(tree, AA, r=radius, k=k, query_radius=True)
+    idxs, distances = compute_D_I(AA, BB, r=radius, k=k,
+                                  query_radius=True)
 
     print("Computing correspondence.")
     b_idxs = np.concatenate(idxs)
