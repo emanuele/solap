@@ -4,7 +4,7 @@ from sklearn.neighbors import KDTree, BallTree
 from solap import tree_parallel_query, compute_solap
 
 
-def solap_radius(AA, BB, radius, k=None):
+def compute_solap_radius(AA, BB, radius, k=None):
     """Compute a scalable (greedy) Sub-Optimal solution to the Linear
     Assignment Problem considering distances till a certain radius.
     """
@@ -45,6 +45,33 @@ def solap_radius(AA, BB, radius, k=None):
     return correspondence
 
 
+def compute_solap_radius_all(A, B, k):
+    sizeA = A.shape[0]
+    sizeB = B.shape[0]
+    a_idxs_left = np.arange(sizeA, dtype=np.int)
+    correspondence = np.empty(shape=(0, 2))
+    A_left = A
+    B_left = B
+    A_left_idx = np.arange(sizeA, dtype=np.int)
+    B_left_idx = np.arange(sizeB, dtype=np.int)
+    while A_left_idx.size > 0:
+        if A_left_idx.size > k:
+            tmp = compute_solap_radius(A_left, B_left, radius=None, k=k)
+        else:
+            tmp = compute_solap(A_left, B_left, k=A_left_idx.size)
+            tmp = np.vstack([range(A_left_idx.size), tmp]).T
+
+        tmp = np.vstack([A_left_idx[tmp[:, 0]], B_left_idx[tmp[:, 1]]]).T
+        correspondence = np.vstack([correspondence, tmp])
+        # updating A_left and B_left:
+        A_left_idx = np.array(list(set(A_left_idx.tolist()).difference(set(tmp[:, 0].tolist()))), dtype=np.int)
+        B_left_idx = np.array(list(set(B_left_idx.tolist()).difference(set(tmp[:, 1].tolist()))), dtype=np.int)
+        A_left = A[A_left_idx]
+        B_left = B[B_left_idx]
+
+    return correspondence
+
+
 if __name__ == '__main__':
 
     np.random.seed(0)
@@ -65,27 +92,7 @@ if __name__ == '__main__':
 
 
     t0 = time()
-    a_idxs_left = np.arange(sizeA, dtype=np.int)
-    correspondence = np.empty(shape=(0, 2))
-    A_left = A
-    B_left = B
-    A_left_idx = np.arange(sizeA, dtype=np.int)
-    B_left_idx = np.arange(sizeB, dtype=np.int)
-    while A_left_idx.size > 0:
-        if A_left_idx.size > k:
-            tmp = solap_radius(A_left, B_left, radius=None, k=k)
-        else:
-            tmp = compute_solap(A_left, B_left, k=A_left_idx.size)
-            tmp = np.vstack([range(A_left_idx.size), tmp]).T
-
-        tmp = np.vstack([A_left_idx[tmp[:, 0]], B_left_idx[tmp[:, 1]]]).T
-        correspondence = np.vstack([correspondence, tmp])
-        # updating A_left and B_left:
-        A_left_idx = np.array(list(set(A_left_idx.tolist()).difference(set(tmp[:, 0].tolist()))), dtype=np.int)
-        B_left_idx = np.array(list(set(B_left_idx.tolist()).difference(set(tmp[:, 1].tolist()))), dtype=np.int)
-        A_left = A[A_left_idx]
-        B_left = B[B_left_idx]
-
+    correspondence = compute_solap_radius_all(A, B, k)
     print("%s sec" % (time()-t0))
     assert(np.unique(correspondence[:, 0]).size == sizeA)
     assert(np.unique(correspondence[:, 1]).size == sizeB)
