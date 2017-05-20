@@ -41,7 +41,7 @@ def worker_query_radius(A_chunk, r):
     for a chunk of data.  Useful for tree_parallel_query().
     """
     global tree
-    D, I = tree.query_radius(A_chunk, r=r, return_distance=True)
+    I, D = tree.query_radius(A_chunk, r=r, return_distance=True)  # notice that in the next line we swap I and D so that worker_query() and worker_query_radius() have uniform output
     return [d.astype(np.float32) for d in D], [i.astype(np.int32) for i in I]  # this saves memory for large datasets
 
 
@@ -272,8 +272,11 @@ def compute_solap_radius_new(AA, BB, radius=None, k=None, parallel=True):
     if radius is None, then it is estimated in order to provide k
     neighbors on average.
     """
-    idxs, distances = compute_D_I(AA, BB, r=radius, k=k,
+    distances, idxs = compute_D_I(AA, BB, r=radius, k=k,
                                   query_radius=True)
+    # Sanity check:
+    avg_num_neighbors = np.mean([tmp.size for tmp in idxs])
+    print("Average number of neighbors: %s" % avg_num_neighbors)
 
     print("Computing correspondence with compute_solap_radius().")
     b_idxs = np.concatenate(idxs)
@@ -361,7 +364,7 @@ def compute_solap_radius_all(A, B, k):
     B_left_idx = np.arange(sizeB, dtype=np.int)
     while A_left_idx.size > 0:
         if A_left_idx.size > k:
-            tmp = compute_solap_radius(A_left, B_left, radius=None, k=k)
+            tmp = compute_solap_radius_new(A_left, B_left, radius=None, k=k)
         else:
             tmp = compute_solap(A_left, B_left, k=A_left_idx.size)
             tmp = np.vstack([range(A_left_idx.size), tmp]).T
