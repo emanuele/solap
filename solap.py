@@ -32,7 +32,8 @@ def worker_query(A_chunk, k):
     chunk of data. Useful for tree_parallel_query().
     """
     global tree
-    return tree.query(A_chunk, k)
+    D, I = tree.query(A_chunk, k)
+    return D.astype(np.float32), I.astype(np.int32)  # this saves memory for large datasets
 
 
 def worker_query_radius(A_chunk, r):
@@ -40,7 +41,8 @@ def worker_query_radius(A_chunk, r):
     for a chunk of data.  Useful for tree_parallel_query().
     """
     global tree
-    return tree.query_radius(A_chunk, r=r, return_distance=True)
+    D, I = tree.query_radius(A_chunk, r=r, return_distance=True)
+    return [d.astype(np.float32) for d in D], [i.astype(np.int32) for i in I]  # this saves memory for large datasets
 
 
 def estimate_radius(tree, A, k, subset_size=1000):
@@ -263,9 +265,52 @@ def compute_solap_sort(A, B, k, maxvalue=100, parallel=True, verbose=False):
     return assignment, loss
 
 
-def compute_solap_radius(AA, BB, radius, k=None, parallel=True):
+def compute_solap_radius_new(AA, BB, radius=None, k=None, parallel=True):
     """Compute a scalable (greedy) Sub-Optimal solution to the Linear
     Assignment Problem considering distances till a certain radius.
+
+    if radius is None, then it is estimated in order to provide k
+    neighbors on average.
+    """
+    idxs, distances = compute_D_I(AA, BB, r=radius, k=k,
+                                  query_radius=True)
+
+    print("Computing correspondence with compute_solap_radius().")
+    b_idxs = np.concatenate(idxs)
+    distances = np.concatenate(distances)
+    idxs_sorted = distances.argsort()
+    a_idxs = np.concatenate([np.ones(len(idx), dtype=np.int32) * i for i, idx in enumerate(idxs)])
+
+    a_expired = set([])
+    b_expired = set([])
+    correspondence = []
+    correspondence_distances = []
+    for counter, idx in enumerate(idxs_sorted):
+        if (counter % 100000) == 0:
+            print(counter)
+
+        a = a_idxs[idx]
+        b = b_idxs[idx]
+        d = distances[idx]
+        if a in a_expired or b in b_expired:
+            continue
+        else:
+            correspondence.append([a, b])
+            correspondence_distances.append(d)
+            a_expired.add(a)
+            b_expired.add(b)
+
+    correspondence = np.array(correspondence, dtype=np.int)
+    correspondence_distances = np.array(correspondence_distances)
+    return correspondence
+
+
+def compute_solap_radius(AA, BB, radius=None, k=None, parallel=True):
+    """Compute a scalable (greedy) Sub-Optimal solution to the Linear
+    Assignment Problem considering distances till a certain radius.
+
+    if radius is None, then it is estimated in order to provide k
+    neighbors on average.
     """
     idxs, distances = compute_D_I(AA, BB, r=radius, k=k,
                                   query_radius=True)
@@ -285,11 +330,11 @@ def compute_solap_radius(AA, BB, radius, k=None, parallel=True):
     while a_idxs.size > 0:
         if (counter % 1000) == 0:
             print(counter)
-    
+
         a = a_idxs[0]
         b = b_idxs[0]
-        r = distances[0]
-        correspondence.append([a, b, r])
+        d = distances[0]
+        correspondence.append([a, b, d])
         tmp = np.logical_and((a_idxs != a), (b_idxs != b))
         a_idxs = a_idxs[tmp]
         b_idxs = b_idxs[tmp]
@@ -308,6 +353,7 @@ def compute_solap_radius_all(A, B, k):
     """
     sizeA = A.shape[0]
     sizeB = B.shape[0]
+    assert(sizeA <= sizeB)
     correspondence = np.empty(shape=(0, 2))
     A_left = A
     B_left = B
