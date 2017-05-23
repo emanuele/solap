@@ -8,6 +8,8 @@ import numpy as np
 from sklearn.neighbors import KDTree as Tree
 # from sklearn.neighbors import BallTree as Tree
 from time import time
+from scipy.special import gammaln
+from logvar import logmean
 
 try:
     from joblib import Parallel, delayed, cpu_count
@@ -45,7 +47,7 @@ def worker_query_radius(A_chunk, r):
     return [d.astype(np.float32) for d in D], [i.astype(np.int32) for i in I]  # this saves memory for large datasets
 
 
-def estimate_radius(tree, A, k, subset_size=1000):
+def estimate_radius_old(tree, A, k, subset_size=1000):
     """Estimate the radius r for a Tree.query_radius(A, r) that will
     return approximately k neighbors per point.
     """
@@ -56,6 +58,28 @@ def estimate_radius(tree, A, k, subset_size=1000):
     r = d[:, -1].mean()
     print("Estimated radius to get %s neighbors on average: %s" % (k, r))
     return r
+
+
+def estimate_radius(treeB, A, k, D, subset_size=1000):
+    """Estimate the radius r for a Tree.query_radius(A, r) that will
+    return approximately k neighbors per point.
+    """
+    if A.shape[0] > subset_size:
+        A = A[np.random.permutation(A.shape[0])[:subset_size], :]  # subsampling
+
+    d, i = tree_parallel_query(treeB, A, k)
+    rs = d[:, -1]
+    # estimate the log densities of neighbors in all D-dimensional
+    # spheres of the subset of query performed above. Given the volume
+    # of the d-dimensional sphere: V = R^D * pi^(D/2) / gamma(D/2+1)
+    # and that the density is V/k, then the log of the mean of the
+    # densities is:
+    const =  gammaln(D / 2.0 + 1.0) - D / 2.0 * np.log(np.pi)
+    log_density_mean = logmean(np.log(d.shape[1]) + const - D * np.log(rs))
+    log_r_mean = 1.0 / D * (np.log(k) + const - log_density_mean)
+    r_mean = np.exp(log_r_mean)
+    print("Estimated radius to get %s neighbors on average: %s" % (k, r_mean))
+    return r_mean
 
 
 def tree_parallel_query(my_tree, A, k=None, r=None, n_jobs=-1, query_radius=False):
@@ -289,7 +313,7 @@ def compute_solap_radius_new(AA, BB, radius=None, k=None, parallel=True):
     correspondence = []
     correspondence_distances = []
     for counter, idx in enumerate(idxs_sorted):
-        if (counter % 100000) == 0:
+        if (counter % 1000000) == 0:
             print(counter)
 
         a = a_idxs[idx]
@@ -350,7 +374,7 @@ def compute_solap_radius(AA, BB, radius=None, k=None, parallel=True):
     return correspondence
 
 
-def compute_solap_radius_all(A, B, k):
+def compute_solap_radius_all(A, B, k, query_radius=True):
     """Iterate over compute_solap_radius() in order to compute the
     sub-optimal linear assignment solution over all points in A.
     """
@@ -362,9 +386,12 @@ def compute_solap_radius_all(A, B, k):
     B_left = B
     A_left_idx = np.arange(sizeA, dtype=np.int)
     B_left_idx = np.arange(sizeB, dtype=np.int)
+    counter = 0
     while A_left_idx.size > 0:
-        if A_left_idx.size > k:
-            tmp = compute_solap_radius_new(A_left, B_left, radius=None, k=k)
+        print("Iteration %s" % counter)
+        if A_left_idx.size > 2 * k:
+            tmp = compute_solap_radius_new(A_left, B_left, radius=None, k=k,
+                                           query_radius=query_radius)
         else:
             tmp = compute_solap(A_left, B_left, k=A_left_idx.size)
             tmp = np.vstack([range(A_left_idx.size), tmp]).T
@@ -376,5 +403,6 @@ def compute_solap_radius_all(A, B, k):
         B_left_idx = np.array(list(set(B_left_idx.tolist()).difference(set(tmp[:, 1].tolist()))), dtype=np.int)
         A_left = A[A_left_idx]
         B_left = B[B_left_idx]
+        counter += 1
 
     return correspondence
