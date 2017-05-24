@@ -60,22 +60,24 @@ def estimate_radius_old(tree, A, k, subset_size=1000):
     return r
 
 
-def estimate_radius(treeB, A, k, D, subset_size=1000):
+def estimate_radius(treeB, A, k, subset_size=1000):
     """Estimate the radius r for a Tree.query_radius(A, r) that will
     return approximately k neighbors per point.
     """
+    D = A.shape[1]
     if A.shape[0] > subset_size:
         A = A[np.random.permutation(A.shape[0])[:subset_size], :]  # subsampling
 
     d, i = tree_parallel_query(treeB, A, k)
     rs = d[:, -1]
-    # estimate the log densities of neighbors in all D-dimensional
-    # spheres of the subset of query performed above. Given the volume
-    # of the d-dimensional sphere: V = R^D * pi^(D/2) / gamma(D/2+1)
-    # and that the density is V/k, then the log of the mean of the
-    # densities is:
+    # Estimate the log densities of neighbors in all D-dimensional
+    # spheres of the subset of queries performed above. Given the
+    # volume of the D-dimensional sphere: V = R^D * pi^(D/2) /
+    # gamma(D/2+1) and that the density is V/k, then the mean of the
+    # densities (in logspace to avoid numerical issues) is:
     const =  gammaln(D / 2.0 + 1.0) - D / 2.0 * np.log(np.pi)
     log_density_mean = logmean(np.log(d.shape[1]) + const - D * np.log(rs))
+    # So, the expexted radius R for k neighbors is:
     log_r_mean = 1.0 / D * (np.log(k) + const - log_density_mean)
     r_mean = np.exp(log_r_mean)
     print("Estimated radius to get %s neighbors on average: %s" % (k, r_mean))
